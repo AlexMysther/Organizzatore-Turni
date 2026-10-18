@@ -10,17 +10,23 @@ App per pianificare i turni settimanali dei dipendenti di più locali (Viale Tun
 Più `departments`, `legend` (legenda del PDF per locale), `users` e `user_venues` (per l'espansione: ogni manager vede solo i propri locali; l'amministratore vede tutto).
 
 ## Avvio in locale
+Serve un MySQL raggiungibile (anche locale). Con Node 20.6+:
 ```bash
 cd server && npm install
-cp .env.example .env   # poi esporta le variabili (o usa un gestore di .env)
-DATABASE_URL=mysql://utente:pw@localhost:3306/turni JWT_SECRET=... ADMIN_PASSWORD=... \
-  ALLOWED_ORIGIN=http://localhost:8080 npm start
+cp .env.example .env    # compila i valori
+node --env-file=.env src/index.js
 cd ../web && python3 -m http.server 8080
 ```
-Le tabelle e il primo utente (`ADMIN_USER`/`ADMIN_PASSWORD`) vengono creati all'avvio. Test: `cd server && npm test` (richiede MySQL/MariaDB con un utente che possa creare il database `turni_test`; `DATABASE_URL` punta a un database qualsiasi dello stesso server).
+Le tabelle e il primo utente (`ADMIN_USER`/`ADMIN_PASSWORD`) vengono creati all'avvio.
+Test: `DATABASE_URL=mysql://utente:pw@localhost:3306/turni_test npm test` (l'utente deve poter creare il database `turni_test`, che viene ricreato a ogni esecuzione).
+
+## Variabili d'ambiente del server
+Vanno impostate sul servizio che ospita `server/` (mai nel repository): vedi `server/.env.example`.
+Con Aiven: `DATABASE_URL` è il *Service URI* (con `?ssl-mode=REQUIRED`) e `DB_CA` il contenuto del certificato CA del servizio.
 
 ## Messa online
-1. **API + MySQL**: su un servizio come Railway/Render crea un database MySQL e un servizio dalla cartella `server/` con le variabili di `server/.env.example` (`ALLOWED_ORIGIN` = URL di GitHub Pages, es. `https://alexmysther.github.io`).
-2. **Frontend**: in `web/js/config.js` imposta `API_URL` con l'indirizzo pubblico dell'API.
-3. **GitHub Pages**: Settings → Pages → Source: *GitHub Actions*. Il workflow `.github/workflows/pages.yml` pubblica `web/` a ogni push su `main`.
-4. Sul telefono apri il sito e usa "Aggiungi a schermata Home".
+1. **Database**: MySQL su Aiven.
+2. **API**: servizio dalla cartella `server/` (avvio: `node src/index.js`, controllo di salute: `/api/health`) con le variabili sopra; `ALLOWED_ORIGIN` = URL di GitHub Pages.
+3. **Frontend**: in `web/js/config.js` imposta `API_URL` con l'indirizzo pubblico dell'API.
+4. **GitHub Pages**: Settings → Pages → Source: *GitHub Actions*. Il workflow `.github/workflows/pages.yml` pubblica `web/` a ogni push su `main`.
+5. Sul telefono apri il sito e usa "Aggiungi a schermata Home".

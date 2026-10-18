@@ -1,8 +1,8 @@
 import mysql from 'mysql2/promise';
+import { parseDbConfig } from './dbconfig.js';
 
-// DATABASE_URL es. mysql://utente:password@host:3306/turni
 export const pool = mysql.createPool({
-  uri: process.env.DATABASE_URL || 'mysql://t:t@127.0.0.1:3306/turni',
+  ...parseDbConfig(),
   waitForConnections: true,
   connectionLimit: 8,
   dateStrings: true,
