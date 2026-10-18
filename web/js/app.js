@@ -4,7 +4,7 @@ import { buildPdf, sharePdf, downloadPdf, venueLabel } from './pdf.js';
 
 const state = {
   venues: [], deps: [], venueId: null, weekStart: D.defaultWeek(),
-  week: null, index: new Map(), tab: 'turni', mode: 'day', day: 0,
+  week: null, index: new Map(), tab: 'turni', mode: 'day', day: 0, statsOpen: false,
 };
 const root = document.getElementById('app');
 
@@ -145,10 +145,12 @@ function render() {
   const body = state.tab === 'turni' ? viewTurni() : state.tab === 'team' ? viewTeam() : viewAltro();
   const tab = (id, icon, label) => h('button', { 'aria-current': state.tab === id ? 'page' : null, onclick: () => { state.tab = id; render(); } }, h('span', {}, icon), label);
   const nodes = [topbar, body];
-  if (state.tab === 'turni') nodes.push(h('button', { class: 'fab', onclick: makePdf }, '📄 PDF'));
+  if (state.tab === 'turni') nodes.push(statsPanel(), h('button', { class: 'fab', onclick: makePdf }, '📄 PDF'));
   nodes.push(h('nav', { class: 'tabbar' }, tab('turni', '🗓', 'Turni'), tab('team', '👥', 'Team'), tab('altro', '⚙️', 'Altro')));
   const scroll = window.scrollY;
   root.replaceChildren(h('div', { class: 'app' }, nodes));
+  const bar = root.querySelector('.tabbar');
+  if (bar) document.documentElement.style.setProperty('--tabbar-h', `${bar.offsetHeight}px`);
   window.scrollTo(0, scroll);
 }
 
@@ -177,15 +179,42 @@ function viewTurni() {
       h('div', { class: 'daytable' }, ds.map((d, i) => h('button', { class: 'row' + (i === 6 ? ' sunday' : ''), onclick: () => editDay(emp, d) },
         h('span', { class: 'dl' }, `${D.DAYS[i]} ${D.dayOfMonth(d)}`), h('span', { style: 'flex:1' }), chips(entriesOf(emp.id, d))))))));
   }
+  const headcount = (d) => state.week.employees.filter((e) => entriesOf(e.id, d).some((s) => s.kind === 'work')).length;
   const strip = h('div', { class: 'days' }, ds.map((d, i) => h('button', {
     class: i === 6 ? 'sun' : '', 'aria-pressed': state.day === i, onclick: () => { state.day = i; render(); },
-  }, h('small', {}, D.DAYS[i]), h('b', {}, D.dayOfMonth(d)))));
+  }, h('small', {}, D.DAYS[i]), h('b', {}, D.dayOfMonth(d)), h('span', { class: 'count', title: 'Persone in turno' }, headcount(d)))));
   const date = ds[state.day];
   return h('div', {}, seg, strip, deptSections((emp) => h('div', { class: 'card' },
     h('button', { class: 'row', onclick: () => editDay(emp, date) }, h('span', { class: 'who' }, emp.full_name), chips(entriesOf(emp.id, date))))));
 }
 
 /* ---------- editor turni di un giorno ---------- */
+
+// Orari abituali: la fine dipende dal giorno (indice 0 = lunedì … 6 = domenica).
+const SLOTS = {
+  pranzo: { label: 'Pranzo', starts: ['11:00', '11:30', '12:00'], end: (i) => (i < 4 ? '14:30' : '15:00') },
+  cena: { label: 'Cena', starts: ['18:00', '18:30', '19:00', '19:30', '20:00'], end: (i) => (i < 4 ? '23:30' : '00:00') },
+};
+const slotOf = (e) => e.slot || (e.start ? (e.start < '16:00' ? 'pranzo' : 'cena') : null);
+const isPreset = (e, i) => { const sl = SLOTS[slotOf(e)]; return !e.start || Boolean(sl && sl.starts.includes(e.start) && e.end === sl.end(i)); };
+
+function slotPicker(e, i, draw) {
+  const sl = slotOf(e);
+  const chip = (text, on, fn) => h('button', { class: 'pick', 'aria-pressed': on, onclick: fn }, text);
+  const out = [h('div', { class: 'picks' }, Object.entries(SLOTS).map(([k, v]) => chip(v.label, sl === k, () => {
+    e.slot = k; e.end = v.end(i); if (!v.starts.includes(e.start)) e.start = ''; e.custom = false; draw();
+  })))];
+  if (sl && !e.custom) {
+    out.push(h('div', { class: 'picks' }, SLOTS[sl].starts.map((t) => chip(t, e.start === t, () => { e.start = t; e.end = SLOTS[sl].end(i); draw(); }))),
+      h('div', { class: 'sub', style: 'font-size:13px;margin:6px 0 0' }, e.start ? `${e.start} – ${e.end}` : `Scegli l'inizio · fine ${SLOTS[sl].end(i)}`));
+  }
+  out.push(h('button', { class: 'linkbtn', onclick: () => { e.custom = !e.custom; draw(); } }, e.custom ? 'Usa orari abituali' : 'Altro orario…'));
+  if (e.custom) out.push(h('div', { class: 'times' },
+    h('input', { type: 'time', value: e.start, 'aria-label': 'Inizio', oninput: (ev) => { e.start = ev.target.value; } }),
+    h('span', {}, '–'),
+    h('input', { type: 'time', value: e.end, 'aria-label': 'Fine', oninput: (ev) => { e.end = ev.target.value; } })));
+  return out;
+}
 
 function overlay(content) {
   const close = () => ov.remove();
@@ -197,6 +226,7 @@ function overlay(content) {
 function editDay(emp, date) {
   const i = dates().indexOf(date);
   const entries = entriesOf(emp.id, date).map((e) => ({ kind: e.kind, start: e.start || '', end: e.end || '', venue_id: e.venue_id }));
+  entries.forEach((e) => { if (e.kind === 'work') e.custom = !isPreset(e, i); });
   const others = state.week.venues.filter((v) => v.id !== state.venueId);
 
   overlay((close) => {
@@ -213,14 +243,14 @@ function editDay(emp, date) {
             h('button', { class: 'x', 'aria-label': 'Rimuovi', onclick: () => { entries.splice(n, 1); draw(); } }, '✕')),
           e.kind === 'loan' ? h('select', { style: 'width:100%;margin-top:8px', 'aria-label': 'Locale', onchange: (ev) => { e.venue_id = Number(ev.target.value); } },
             others.map((v) => h('option', { value: v.id, selected: v.id === e.venue_id }, venueLabel(v)))) : null,
-          h('div', { class: 'times' },
+          e.kind === 'work' ? slotPicker(e, i, draw) : h('div', { class: 'times' },
             h('input', { type: 'time', value: e.start, 'aria-label': 'Inizio', oninput: (ev) => { e.start = ev.target.value; } }),
             h('span', {}, '–'),
             h('input', { type: 'time', value: e.end, 'aria-label': 'Fine', oninput: (ev) => { e.end = ev.target.value; } })),
           e.kind === 'loan' ? h('div', { class: 'sub', style: 'font-size:12px;margin:6px 0 0' }, 'Orari facoltativi per i prestiti') : null));
       box.replaceChildren(...list,
         h('div', { class: 'actions' },
-          entries.length < 3 ? h('button', { class: 'btn', onclick: () => { if (isRest) entries.length = 0; entries.push({ kind: 'work', start: '', end: '' }); draw(); } }, '+ Fascia') : null,
+          entries.length < 3 ? h('button', { class: 'btn', onclick: () => { if (isRest) entries.length = 0; const slot = entries.some((x) => slotOf(x) === 'pranzo') ? 'cena' : 'pranzo'; entries.push({ kind: 'work', slot, start: '', end: SLOTS[slot].end(i) }); draw(); } }, '+ Fascia') : null,
           h('button', { class: 'btn', style: 'color:var(--rest)', onclick: () => { entries.length = 0; entries.push({ kind: 'rest', start: '', end: '' }); draw(); } }, 'Riposo (R)')),
         h('button', { class: 'btn primary block', onclick: async () => {
           const payload = entries.map((e) => ({ kind: e.kind, start: e.start || null, end: e.end || null, venue_id: e.kind === 'loan' ? e.venue_id : undefined }));
@@ -232,6 +262,66 @@ function editDay(emp, date) {
     draw();
     return [h('h3', {}, emp.full_name), h('div', { class: 'sub' }, `${D.DAYS[i]} ${D.dayOfMonth(date)}/${date.slice(5, 7)}`), box];
   });
+}
+
+/* ---------- statistiche ore ---------- */
+
+const toMin = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+const shiftHours = (e) => { let d = toMin(e.end) - toMin(e.start); if (d <= 0) d += 1440; return d / 60; };
+const weekHours = (empId) => dates().reduce((tot, d) => tot + entriesOf(empId, d).filter((e) => e.kind === 'work' && e.start && e.end).reduce((a, e) => a + shiftHours(e), 0), 0);
+const fmtH = (n) => `${Number.isInteger(n) ? n : n.toFixed(1).replace('.', ',')}h`;
+
+function statsContent() {
+  let tot = 0;
+  const secs = state.deps.map((dep) => {
+    const emps = state.week.employees.filter((e) => e.department_id === dep.id);
+    if (!emps.length) return null;
+    return h('section', { class: 'section', style: 'padding:10px 0 0' }, h('h2', {}, dep.name), h('div', { class: 'card' }, emps.map((emp) => {
+      const w = weekHours(emp.id), c = Number(emp.weekly_hours) || 0, diff = w - c;
+      tot += w;
+      const note = !c ? h('span', { class: 'delta' }, 'ore contratto non impostate')
+        : diff > 0 ? h('span', { class: 'delta over' }, `+${fmtH(diff)} oltre`)
+        : diff < 0 ? h('span', { class: 'delta under' }, `mancano ${fmtH(-diff)}`) : h('span', { class: 'delta ok' }, 'completo ✓');
+      return h('div', { class: 'row stat' }, h('span', { class: 'who' }, emp.full_name),
+        h('span', { class: 'hrs' }, h('b', {}, fmtH(w)), c ? ` / ${fmtH(c)}` : '', h('br'), note));
+    })));
+  }).filter(Boolean);
+  return [h('h3', { style: 'margin:0' }, 'Ore della settimana'), h('div', { class: 'sub' }, `${D.weekLabel(state.weekStart)} · totale ${fmtH(tot)}`), ...secs,
+    h('div', { class: 'sub', style: 'font-size:13px;margin-top:10px' }, 'Imposta le ore di contratto da Team › dipendente.')];
+}
+
+// Pannello che si trascina verso l'alto dalla maniglia sopra la barra delle schede.
+function statsPanel() {
+  const grab = h('div', { class: 'grabzone', 'aria-label': 'Statistiche ore: trascina verso l\'alto' }, h('div', { class: 'grab' }), h('span', {}, 'Ore'));
+  const panel = h('div', { class: 'statpanel' + (state.statsOpen ? ' open' : '') }, grab, h('div', { class: 'statbody' }, statsContent()));
+  let y0 = null, moved = false, closedY = 0;
+  const offset = () => panel.offsetHeight - 30;
+  grab.addEventListener('pointerdown', (e) => {
+    y0 = e.clientY; moved = false; closedY = offset();
+    grab.setPointerCapture(e.pointerId);
+    panel.classList.add('dragging');
+  });
+  grab.addEventListener('pointermove', (e) => {
+    if (y0 == null) return;
+    const dy = e.clientY - y0;
+    if (Math.abs(dy) > 4) moved = true;
+    const base = state.statsOpen ? 0 : closedY;
+    panel.style.transform = `translateY(${Math.min(closedY, Math.max(0, base + dy))}px)`;
+  });
+  const end = (e) => {
+    if (y0 == null) return;
+    const dy = e.clientY - y0;
+    panel.classList.remove('dragging');
+    panel.style.transform = '';
+    if (!moved) state.statsOpen = !state.statsOpen;
+    else if (dy < -40) state.statsOpen = true;
+    else if (dy > 40) state.statsOpen = false;
+    panel.classList.toggle('open', state.statsOpen);
+    y0 = null;
+  };
+  grab.addEventListener('pointerup', end);
+  grab.addEventListener('pointercancel', end);
+  return panel;
 }
 
 /* ---------- PDF ---------- */
@@ -269,15 +359,17 @@ function editEmployee(emp) {
   overlay((close) => {
     const name = h('input', { value: emp?.full_name || '', placeholder: 'Cognome Nome', autocapitalize: 'words' });
     const dep = h('select', {}, state.deps.map((d) => h('option', { value: d.id, selected: d.id === (emp?.department_id ?? state.deps[0]?.id) }, d.name)));
+    const hours = h('input', { type: 'number', inputMode: 'decimal', min: 0, max: 80, step: 0.5, value: emp?.weekly_hours > 0 ? emp.weekly_hours : '', placeholder: 'es. 40' });
     return [
       h('h3', {}, emp ? 'Modifica dipendente' : 'Nuovo dipendente'),
       h('label', { class: 'field' }, 'Nome', name),
       h('label', { class: 'field' }, 'Reparto', dep),
+      h('label', { class: 'field' }, 'Ore settimanali da contratto', hours),
       h('button', { class: 'btn primary block', onclick: async () => {
         const n = name.value.trim();
         if (!n) return toast('Inserisci il nome', true);
         const d = Number(dep.value);
-        const ok = await act(() => (emp ? api.updateEmployee(emp.id, n, d) : api.addEmployee(state.venueId, d, n)));
+        const ok = await act(() => (emp ? api.updateEmployee(emp.id, n, d, hours.value) : api.addEmployee(state.venueId, d, n, hours.value)));
         if (ok) { close(); reloadWeek(); }
       } }, 'Salva'),
       emp ? h('button', { class: 'btn danger block', onclick: async () => {

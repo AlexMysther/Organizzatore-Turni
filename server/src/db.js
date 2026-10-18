@@ -72,6 +72,9 @@ const SCHEMA = [
 
 export async function initSchema() {
   for (const sql of SCHEMA) await pool.query(sql);
+  const [[col]] = await pool.query(
+    "SELECT COUNT(*) n FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'employees' AND column_name = 'weekly_hours'");
+  if (col.n === 0) await pool.query('ALTER TABLE employees ADD COLUMN weekly_hours DECIMAL(4,1) NOT NULL DEFAULT 0');
   const [[{ n }]] = await pool.query('SELECT COUNT(*) n FROM departments');
   if (n === 0) {
     const names = ['Garzone', 'Pizzaiolo', 'Sala', 'Store Manager'];

@@ -68,7 +68,7 @@ export function createApp() {
     const [[venue]] = await pool.query('SELECT id, city, name FROM venues WHERE id = ?', [id]);
     if (!venue) throw new HttpError(404, 'Locale non trovato');
     const [employees] = await pool.query(
-      'SELECT id, department_id, full_name FROM employees WHERE venue_id = ? AND active = 1 ORDER BY full_name', [id]);
+      'SELECT id, department_id, full_name, weekly_hours FROM employees WHERE venue_id = ? AND active = 1 ORDER BY full_name', [id]);
     const [shifts] = await pool.query(
       `SELECT s.employee_id, s.work_date AS date, s.kind, s.start_time AS start, s.end_time AS end, s.location_venue_id AS venue_id
          FROM shifts s JOIN employees e ON e.id = s.employee_id
@@ -79,6 +79,13 @@ export function createApp() {
     const [venues] = await pool.query('SELECT id, city, name FROM venues ORDER BY city, name');
     res.json({ venue, venues, employees, shifts, legend });
   }));
+
+  function parseHours(v, fallback) {
+    if (v === undefined || v === null || v === '') return fallback;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0 || n > 80) throw new HttpError(400, 'Ore settimanali non valide');
+    return Math.round(n * 2) / 2;
+  }
 
   async function loadEmployee(req, id) {
     const [[e]] = await pool.query('SELECT * FROM employees WHERE id = ? AND active = 1', [id]);
@@ -95,9 +102,10 @@ export function createApp() {
     const [[d]] = await pool.query('SELECT id FROM departments WHERE id = ?', [department_id]);
     const [[v]] = await pool.query('SELECT id FROM venues WHERE id = ?', [venue_id]);
     if (!d || !v) throw new HttpError(400, 'Locale o reparto non valido');
-    const [r] = await pool.query('INSERT INTO employees (venue_id, department_id, full_name) VALUES (?, ?, ?)',
-      [venue_id, department_id, full_name]);
-    res.status(201).json({ id: r.insertId, department_id, full_name });
+    const weekly_hours = parseHours(req.body?.weekly_hours, 0);
+    const [r] = await pool.query('INSERT INTO employees (venue_id, department_id, full_name, weekly_hours) VALUES (?, ?, ?, ?)',
+      [venue_id, department_id, full_name, weekly_hours]);
+    res.status(201).json({ id: r.insertId, department_id, full_name, weekly_hours });
   }));
 
   app.put('/api/employees/:id', wrap(async (req, res) => {
@@ -107,8 +115,9 @@ export function createApp() {
     if (!full_name) throw new HttpError(400, 'Nome mancante');
     const [[d]] = await pool.query('SELECT id FROM departments WHERE id = ?', [department_id]);
     if (!d) throw new HttpError(400, 'Reparto non valido');
-    await pool.query('UPDATE employees SET full_name = ?, department_id = ? WHERE id = ?', [full_name, department_id, e.id]);
-    res.json({ id: e.id, department_id, full_name });
+    const weekly_hours = parseHours(req.body?.weekly_hours, e.weekly_hours);
+    await pool.query('UPDATE employees SET full_name = ?, department_id = ?, weekly_hours = ? WHERE id = ?', [full_name, department_id, weekly_hours, e.id]);
+    res.json({ id: e.id, department_id, full_name, weekly_hours });
   }));
 
   // eliminazione "morbida": lo storico dei turni resta nel database
