@@ -83,7 +83,7 @@ export function createApp() {
   function parseHours(v, fallback) {
     if (v === undefined || v === null || v === '') return fallback;
     const n = Number(v);
-    if (!Number.isFinite(n) || n < 0 || n > 80) throw new HttpError(400, 'Ore settimanali non valide');
+    if (!Number.isFinite(n) || n < 0 || n > 666) throw new HttpError(400, 'Ore settimanali non valide');
     return Math.round(n * 2) / 2;
   }
 

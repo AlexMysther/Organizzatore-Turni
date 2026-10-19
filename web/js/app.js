@@ -22,6 +22,30 @@ function h(tag, attrs, ...kids) {
   return el;
 }
 
+// Icone a tratto (stile Lucide), colorate con il colore del testo.
+const ICONS = {
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  settings: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
+  file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  pencil: '<path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>',
+  left: '<path d="m15 18-6-6 6-6"/>',
+  right: '<path d="m9 18 6-6-6-6"/>',
+  up: '<path d="m18 15-6-6-6 6"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+};
+function icon(name, size = 22) {
+  const el = document.createElement('span');
+  el.className = 'ic';
+  el.innerHTML = `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+  return el;
+}
+
 let toastTimer;
 function toast(msg, isError = false) {
   const t = document.getElementById('toast');
@@ -122,31 +146,74 @@ function chips(entries) {
   if (!entries.length) return h('div', { class: 'chips' }, h('span', { class: 'chip empty' }, '—'));
   return h('div', { class: 'chips' }, entries.map((e) => {
     if (e.kind === 'rest') return h('span', { class: 'chip rest' }, 'R');
-    if (e.kind === 'work') return h('span', { class: 'chip' }, `${e.start} – ${e.end}`);
-    return h('span', { class: 'chip loan' }, `→ ${venueName(e.venue_id)}${e.start ? ` ${e.start}–${e.end}` : ''}`);
+    if (e.kind === 'work') return h('span', { class: `chip ${slotOf(e) === 'cena' ? 'dinner' : 'lunch'}` }, `${e.start} – ${e.end}`);
+    return h('span', { class: 'chip loan' }, [icon('arrow', 13), ` ${venueName(e.venue_id)}${e.start ? ` ${e.start}–${e.end}` : ''}`]);
   }));
 }
 
 /* ---------- schermata principale ---------- */
 
+// Menu a tendina personalizzato (l'elenco dei <select> nativi non è stilizzabile su desktop).
+// options: [{ value, label }]; la variante 'form' si apre dentro la scheda invece di sovrapporsi.
+function dropdown({ options, value, label, onchange, variant = '' }) {
+  let current = value;
+  const text = h('span', {});
+  const menu = h('div', { class: 'menu', role: 'listbox', hidden: true });
+  const btn = h('button', { class: 'picker-btn', type: 'button', 'aria-haspopup': 'listbox', 'aria-label': label, 'aria-expanded': 'false',
+    onclick: (e) => { e.stopPropagation(); const open = menu.hidden; closePicker(); menu.hidden = !open; btn.setAttribute('aria-expanded', String(open)); } },
+  text, icon('chevron', 18));
+  const draw = () => {
+    text.textContent = options.find((o) => o.value === current)?.label ?? '';
+    menu.replaceChildren(...options.map((o) => h('button', {
+      class: 'opt', role: 'option', 'aria-selected': o.value === current, type: 'button',
+      onclick: () => {
+        menu.hidden = true; btn.setAttribute('aria-expanded', 'false');
+        if (o.value === current) return;
+        current = o.value; draw(); onchange(o.value);
+      },
+    }, o.label, o.value === current ? icon('check', 18) : null)));
+  };
+  draw();
+  const wrap = h('div', { class: `picker ${variant}`.trim() }, btn, menu);
+  Object.defineProperty(wrap, 'value', { get: () => current });
+  return wrap;
+}
+
+const venuePicker = () => dropdown({
+  label: 'Locale', value: state.venueId, options: state.venues.map((v) => ({ value: v.id, label: venueLabel(v) })),
+  onchange: (id) => {
+    state.venueId = id;
+    try { localStorage.setItem('turni.venue', id); } catch { /* storage non disponibile */ }
+    reloadWeek();
+  },
+});
+const closePicker = () => document.querySelectorAll('.picker .menu').forEach((m) => { m.hidden = true; m.previousElementSibling?.setAttribute('aria-expanded', 'false'); });
+document.addEventListener('click', closePicker);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePicker(); });
+
 function render() {
   const wk = state.weekStart;
   const topbar = h('div', { class: 'topbar' },
-    h('select', { 'aria-label': 'Locale', onchange: (e) => {
-      state.venueId = Number(e.target.value);
-      try { localStorage.setItem('turni.venue', state.venueId); } catch { /* storage non disponibile */ }
-      reloadWeek();
-    } }, state.venues.map((v) => h('option', { value: v.id, selected: v.id === state.venueId }, venueLabel(v)))),
-    h('div', { class: 'weeknav' },
-      h('button', { 'aria-label': 'Settimana precedente', onclick: () => shiftWeek(-7) }, '‹'),
+    venuePicker(),
+    state.tab === 'turni' ? h('div', { class: 'weeknav' },
+      h('button', { 'aria-label': 'Settimana precedente', onclick: () => shiftWeek(-7) }, icon('left')),
       h('div', { class: 'label' }, `Settimana ${D.isoWeek(wk)}`, h('small', {}, D.weekLabel(wk))),
-      h('button', { 'aria-label': 'Settimana successiva', onclick: () => shiftWeek(7) }, '›')));
+      h('button', { 'aria-label': 'Settimana successiva', onclick: () => shiftWeek(7) }, icon('right'))) : null);
 
-  const body = state.tab === 'turni' ? viewTurni() : state.tab === 'team' ? viewTeam() : viewAltro();
-  const tab = (id, icon, label) => h('button', { 'aria-current': state.tab === id ? 'page' : null, onclick: () => { state.tab = id; render(); } }, h('span', {}, icon), label);
+  const slide = pendingSlide;
+  pendingSlide = null;
+  const body = pager(state.tab === 'turni' ? viewTurni() : state.tab === 'team' ? viewTeam() : viewAltro(), swipeAction());
+  if (slide) (body.querySelector('.page') || body).classList.add(`in-${slide}`);
+  const goTab = (id) => {
+    if (id === state.tab) return;
+    pendingSlide = TABS.indexOf(id) > TABS.indexOf(state.tab) ? 'next' : 'prev';
+    state.tab = id;
+    render();
+  };
+  const tab = (id, icon_, label) => h('button', { 'aria-current': state.tab === id ? 'page' : null, onclick: () => goTab(id) }, icon(icon_), h('span', { class: 'lbl' }, label));
   const nodes = [topbar, body];
-  if (state.tab === 'turni') nodes.push(statsPanel(), h('button', { class: 'fab', onclick: makePdf }, '📄 PDF'));
-  nodes.push(h('nav', { class: 'tabbar' }, tab('turni', '🗓', 'Turni'), tab('team', '👥', 'Team'), tab('altro', '⚙️', 'Altro')));
+  if (state.tab === 'turni') nodes.push(statsPanel(), h('button', { class: 'fab', onclick: makePdf }, icon('file', 20), 'PDF'));
+  nodes.push(h('nav', { class: 'tabbar' }, tab('turni', 'calendar', 'Turni'), tab('team', 'users', 'Team'), tab('altro', 'settings', 'Altro')));
   const scroll = window.scrollY;
   root.replaceChildren(h('div', { class: 'app' }, nodes));
   const bar = root.querySelector('.tabbar');
@@ -155,8 +222,77 @@ function render() {
 }
 
 function shiftWeek(n) {
+  pendingSlide = n > 0 ? 'next' : 'prev';
   state.weekStart = D.addDays(state.weekStart, n);
   reloadWeek();
+}
+
+/* ---------- gesti: scorrimento tra giorni, settimane e schede ---------- */
+
+const TABS = ['turni', 'team', 'altro'];
+let pendingSlide = null; // 'next' | 'prev': direzione dell'animazione di ingresso al prossimo render()
+
+// Cosa fa lo scorrimento orizzontale nella schermata corrente. dir: +1 = verso sinistra (avanti), -1 = indietro.
+// Ritorna false se in quella direzione non c'è nulla da mostrare (il contenuto torna al suo posto).
+function swipeAction() {
+  return (dir) => {
+    if (state.tab === 'turni') {
+      if (state.mode === 'week') return shiftWeek(dir * 7);
+      const day = state.day + dir;
+      if (day >= 0 && day <= 6) { pendingSlide = dir > 0 ? 'next' : 'prev'; state.day = day; return render(); }
+      state.day = dir > 0 ? 0 : 6;
+      return shiftWeek(dir * 7);
+    }
+    const t = TABS[TABS.indexOf(state.tab) + dir];
+    if (!t) return false;
+    pendingSlide = dir > 0 ? 'next' : 'prev';
+    state.tab = t;
+    render();
+  };
+}
+
+// Contenitore che segue il dito in orizzontale e, a gesto concluso, passa alla pagina successiva o precedente.
+function pager(content, onSwipe) {
+  const el = h('div', { class: 'pager' }, content);
+  // si muove solo la parte con le liste (.page): intestazioni, giorni e riepilogo restano fermi
+  const page = () => el.querySelector('.page') || el;
+  let x0 = null, y0 = 0, t0 = 0, id = null, dragging = false;
+  const reset = () => { x0 = null; dragging = false; el.classList.remove('dragging'); };
+  el.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    x0 = e.clientX; y0 = e.clientY; t0 = performance.now(); id = e.pointerId; dragging = false;
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (x0 == null || e.pointerId !== id) return;
+    const dx = e.clientX - x0, dy = e.clientY - y0;
+    if (!dragging) {
+      if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) return void (x0 = null); // è uno scorrimento verticale
+      if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+      dragging = true;
+      el.setPointerCapture(id);
+      el.classList.add('dragging');
+    }
+    page().style.transform = `translate3d(${dx * 0.55}px, 0, 0)`;
+    page().style.opacity = String(1 - Math.min(Math.abs(dx) / 500, 0.5));
+  });
+  const finish = (e) => {
+    if (x0 == null || e.pointerId !== id) return;
+    const dx = e.clientX - x0, fast = Math.abs(dx) / (performance.now() - t0) > 0.5;
+    const was = dragging;
+    reset();
+    page().style.transition = 'transform .18s cubic-bezier(.2,.8,.2,1), opacity .18s';
+    if (was && e.type === 'pointerup' && (Math.abs(dx) > el.offsetWidth * 0.22 || (fast && Math.abs(dx) > 30))) {
+      const dir = dx < 0 ? 1 : -1;
+      page().style.transform = `translate3d(${-dir * 48}px, 0, 0)`;
+      page().style.opacity = '0';
+      setTimeout(() => { if (onSwipe(dir) === false) { page().style.transform = ''; page().style.opacity = ''; } }, 110);
+    } else {
+      page().style.transform = ''; page().style.opacity = '';
+    }
+  };
+  el.addEventListener('pointerup', finish);
+  el.addEventListener('pointercancel', finish);
+  return el;
 }
 
 function deptSections(renderEmployee) {
@@ -170,22 +306,39 @@ function deptSections(renderEmployee) {
 
 function viewTurni() {
   const ds = dates();
-  const seg = h('div', { class: 'seg' },
-    h('button', { 'aria-pressed': state.mode === 'day', onclick: () => { state.mode = 'day'; render(); } }, 'Giorno'),
-    h('button', { 'aria-pressed': state.mode === 'week', onclick: () => { state.mode = 'week'; render(); } }, 'Settimana'));
+  const seg = segmented('Vista', [{ value: 'day', label: 'Giorno' }, { value: 'week', label: 'Settimana' }], state.mode,
+    (m) => { state.mode = m; render(); }, 'vista', 'seg');
   if (state.mode === 'week') {
-    return h('div', {}, seg, deptSections((emp) => h('div', { class: 'card' },
+    return h('div', {}, seg, h('div', { class: 'page' }, deptSections((emp) => h('div', { class: 'card' },
       h('div', { class: 'name' }, emp.full_name),
       h('div', { class: 'daytable' }, ds.map((d, i) => h('button', { class: 'row' + (i === 6 ? ' sunday' : ''), onclick: () => editDay(emp, d) },
-        h('span', { class: 'dl' }, `${D.DAYS[i]} ${D.dayOfMonth(d)}`), h('span', { style: 'flex:1' }), chips(entriesOf(emp.id, d))))))));
+        h('span', { class: 'dl' }, `${D.DAYS[i]} ${D.dayOfMonth(d)}`), h('span', { style: 'flex:1' }), chips(entriesOf(emp.id, d)))))))));
   }
-  const headcount = (d) => state.week.employees.filter((e) => entriesOf(e.id, d).some((s) => s.kind === 'work')).length;
-  const strip = h('div', { class: 'days' }, ds.map((d, i) => h('button', {
-    class: i === 6 ? 'sun' : '', 'aria-pressed': state.day === i, onclick: () => { state.day = i; render(); },
-  }, h('small', {}, D.DAYS[i]), h('b', {}, D.dayOfMonth(d)), h('span', { class: 'count', title: 'Persone in turno' }, headcount(d)))));
+  // persone in turno a pranzo e a cena (chi fa il doppio turno conta in entrambi; i prestiti non contano)
+  const crew = (d) => {
+    const n = { pranzo: 0, cena: 0 };
+    for (const emp of state.week.employees) {
+      const slots = new Set(entriesOf(emp.id, d).filter((x) => x.kind === 'work').map(slotOf));
+      for (const k of Object.keys(n)) if (slots.has(k)) n[k]++;
+    }
+    return n;
+  };
+  const strip = h('div', { class: 'days' }, ds.map((d, i) => {
+    const c = crew(d);
+    return h('button', {
+      class: i === 6 ? 'sun' : '', 'aria-pressed': state.day === i, 'aria-label': `${D.DAYS[i]} ${D.dayOfMonth(d)}: ${c.pranzo} a pranzo, ${c.cena} a cena`,
+      onclick: () => { if (i === state.day) return; pendingSlide = i > state.day ? 'next' : 'prev'; state.day = i; render(); },
+    }, h('small', {}, D.DAYS[i]), h('b', {}, D.dayOfMonth(d)),
+    h('span', { class: 'count', 'aria-hidden': 'true' }, h('i', { class: 'p' + (c.pranzo ? '' : ' zero') }, c.pranzo), h('i', { class: 'c' + (c.cena ? '' : ' zero') }, c.cena)));
+  }));
   const date = ds[state.day];
-  return h('div', {}, seg, strip, deptSections((emp) => h('div', { class: 'card' },
-    h('button', { class: 'row', onclick: () => editDay(emp, date) }, h('span', { class: 'who' }, emp.full_name), chips(entriesOf(emp.id, date))))));
+  const today = crew(date);
+  const tally = (key, label) => h('div', { class: `tally ${key}` + (today[key] ? '' : ' zero') },
+    h('span', { class: 'tally-n' }, today[key]),
+    h('span', { class: 'tally-l' }, h('b', {}, label), today[key] === 1 ? 'persona' : 'persone'));
+  const summary = h('div', { class: 'crew', role: 'group', 'aria-label': 'Persone in turno' }, tally('pranzo', 'Pranzo'), tally('cena', 'Cena'));
+  return h('div', {}, seg, strip, summary, h('div', { class: 'page' }, deptSections((emp) => h('div', { class: 'card' },
+    h('button', { class: 'row', onclick: () => editDay(emp, date) }, h('span', { class: 'who' }, emp.full_name), chips(entriesOf(emp.id, date)))))));
 }
 
 /* ---------- editor turni di un giorno ---------- */
@@ -198,27 +351,94 @@ const SLOTS = {
 const slotOf = (e) => e.slot || (e.start ? (e.start < '16:00' ? 'pranzo' : 'cena') : null);
 const isPreset = (e, i) => { const sl = SLOTS[slotOf(e)]; return !e.start || Boolean(sl && sl.starts.includes(e.start) && e.end === sl.end(i)); };
 
-function slotPicker(e, i, draw) {
+// Controllo a segmenti: una sola scelta tra poche opzioni, sempre tutte visibili.
+// L'indicatore scorre dalla posizione precedente (ricordata per chiave) a quella nuova, anche se la schermata viene ridisegnata.
+const thumbs = new Map();
+let uid = 0;
+function segmented(label, options, value, onpick, key = label, cls = '') {
+  const idx = options.findIndex((o) => o.value === value);
+  const el = h('div', { class: `segmented ${cls}`.trim(), role: 'group', 'aria-label': label }, options.map((o) => h('button', {
+    type: 'button', class: o.value === value ? 'on' : '', 'aria-pressed': o.value === value, onclick: () => onpick(o.value),
+  }, o.label)));
+  const k = `${key}:${options.length}`, prev = thumbs.get(k), at = Math.max(idx, 0);
+  el.style.setProperty('--n', options.length);
+  el.style.setProperty('--idx', prev ?? at);
+  el.classList.toggle('none', idx < 0);
+  thumbs.set(k, at);
+  if (prev !== undefined && prev !== at) requestAnimationFrame(() => requestAnimationFrame(() => el.style.setProperty('--idx', at)));
+  return el;
+}
+const entryKey = (e) => (e.uid ??= ++uid);
+const caption = (text) => h('div', { class: 'cap' }, text);
+
+// optional: per i prestiti gli orari sono facoltativi, quindi c'è anche "Senza orario".
+function slotPicker(e, i, draw, optional = false) {
   const sl = slotOf(e);
-  const chip = (text, on, fn) => h('button', { class: 'pick', 'aria-pressed': on, onclick: fn }, text);
-  const out = [h('div', { class: 'picks' }, Object.entries(SLOTS).map(([k, v]) => chip(v.label, sl === k, () => {
-    e.slot = k; e.end = v.end(i); if (!v.starts.includes(e.start)) e.start = ''; e.custom = false; draw();
-  })))];
+  const fasce = [...(optional ? [{ value: '', label: 'Senza orario' }] : []), ...Object.entries(SLOTS).map(([k, v]) => ({ value: k, label: v.label }))];
+  const out = [
+    caption(optional ? 'Fascia (facoltativa)' : 'Fascia'),
+    segmented('Fascia', fasce, e.custom ? null : (sl || ''), (k) => {
+      e.custom = false;
+      if (!k) { e.slot = null; e.start = ''; e.end = ''; return draw(); }
+      e.slot = k; e.end = SLOTS[k].end(i); if (!SLOTS[k].starts.includes(e.start)) e.start = '';
+      draw();
+    }, `fascia${entryKey(e)}`, 'tight'),
+  ];
   if (sl && !e.custom) {
-    out.push(h('div', { class: 'picks' }, SLOTS[sl].starts.map((t) => chip(t, e.start === t, () => { e.start = t; e.end = SLOTS[sl].end(i); draw(); }))),
-      h('div', { class: 'sub', style: 'font-size:13px;margin:6px 0 0' }, e.start ? `${e.start} – ${e.end}` : `Scegli l'inizio · fine ${SLOTS[sl].end(i)}`));
+    const starts = SLOTS[sl].starts;
+    out.push(caption(`Inizio · fine ${SLOTS[sl].end(i)}`),
+      h('div', { class: 'times-grid', style: `--n:${starts.length}` }, starts.map((t) => h('button', {
+        type: 'button', class: 'time' + (e.start === t ? ' on' : ''), 'aria-pressed': e.start === t,
+        onclick: () => { e.start = t; e.end = SLOTS[sl].end(i); draw(); },
+      }, t))));
   }
-  out.push(h('button', { class: 'linkbtn', onclick: () => { e.custom = !e.custom; draw(); } }, e.custom ? 'Usa orari abituali' : 'Altro orario…'));
-  if (e.custom) out.push(h('div', { class: 'times' },
-    h('input', { type: 'time', value: e.start, 'aria-label': 'Inizio', oninput: (ev) => { e.start = ev.target.value; } }),
-    h('span', {}, '–'),
-    h('input', { type: 'time', value: e.end, 'aria-label': 'Fine', oninput: (ev) => { e.end = ev.target.value; } })));
+  if (e.custom) out.push(caption('Orario personalizzato'), h('div', { class: 'times' },
+    h('input', { type: 'time', value: e.start, 'aria-label': 'Inizio', oninput: (ev) => { e.start = ev.target.value; refreshReadout(); } }),
+    h('span', { 'aria-hidden': 'true' }, '–'),
+    h('input', { type: 'time', value: e.end, 'aria-label': 'Fine', oninput: (ev) => { e.end = ev.target.value; refreshReadout(); } })));
+  out.push(h('button', { type: 'button', class: 'linkbtn', onclick: () => { e.custom = !e.custom; draw(); } }, e.custom ? 'Usa gli orari abituali' : 'Altro orario…'));
   return out;
 }
+let refreshReadout = () => {};
 
-function overlay(content) {
-  const close = () => ov.remove();
-  const ov = h('div', { class: 'overlay', onclick: (e) => { if (e.target === ov) close(); } }, h('div', { class: 'sheet', role: 'dialog' }, content(close)));
+// cls: classe aggiuntiva per la scheda (es. 'day' = intestazione e pulsante Salva fissi, corpo scorrevole)
+// La scheda sale dal basso e si chiude trascinandola in giù dalla maniglia.
+function overlay(content, cls = '') {
+  let closing = false;
+  const close = () => {
+    if (closing) return;
+    closing = true;
+    ov.classList.add('leaving');
+    setTimeout(() => ov.remove(), 240);
+  };
+  const handle = h('div', { class: 'handle', 'aria-hidden': 'true' }, h('span'));
+  const sheet = h('div', { class: `sheet ${cls}`.trim(), role: 'dialog', 'aria-modal': 'true' }, handle, content(close));
+  const ov = h('div', { class: 'overlay', onclick: (e) => { if (e.target === ov) close(); } }, sheet);
+
+  let y0 = null, t0 = 0, dy = 0;
+  handle.addEventListener('pointerdown', (e) => {
+    y0 = e.clientY; t0 = performance.now(); dy = 0;
+    handle.setPointerCapture(e.pointerId);
+    ov.classList.add('dragging');
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (y0 == null) return;
+    dy = Math.max(0, e.clientY - y0);
+    sheet.style.transform = `translate3d(0, ${dy}px, 0)`;
+    ov.style.setProperty('--dim', String(1 - Math.min(dy / sheet.offsetHeight, 1)));
+  });
+  const release = () => {
+    if (y0 == null) return;
+    const fast = dy / (performance.now() - t0) > 0.6;
+    y0 = null;
+    ov.classList.remove('dragging');
+    sheet.style.transform = '';
+    ov.style.removeProperty('--dim');
+    if (dy > sheet.offsetHeight * 0.3 || (fast && dy > 30)) close();
+  };
+  handle.addEventListener('pointerup', release);
+  handle.addEventListener('pointercancel', release);
+
   document.body.append(ov);
   return close;
 }
@@ -226,42 +446,87 @@ function overlay(content) {
 function editDay(emp, date) {
   const i = dates().indexOf(date);
   const entries = entriesOf(emp.id, date).map((e) => ({ kind: e.kind, start: e.start || '', end: e.end || '', venue_id: e.venue_id }));
-  entries.forEach((e) => { if (e.kind === 'work') e.custom = !isPreset(e, i); });
+  entries.forEach((e) => { if (e.kind !== 'rest') e.custom = !isPreset(e, i); });
   const others = state.week.venues.filter((v) => v.id !== state.venueId);
+  // colore e nome del turno: pranzo / cena / prestito / riposo (gli stessi dei riquadri nella vista principale)
+  const toneOf = (e) => (e.kind === 'rest' ? 'rest' : e.kind === 'loan' ? 'loan' : slotOf(e) || 'work');
+  const nameOf = (e) => ({ rest: 'Riposo', loan: 'Prestito', pranzo: 'Pranzo', cena: 'Cena', work: 'Turno' })[toneOf(e)];
+  const timeOf = (e) => (e.start && e.end ? `${e.start} – ${e.end}` : null);
 
   overlay((close) => {
-    const box = h('div');
+    const body = h('div', { class: 'day-body' });
     const draw = () => {
       const isRest = entries.length === 1 && entries[0].kind === 'rest';
-      const list = isRest
-        ? [h('div', { class: 'entry' }, h('div', { class: 'top' }, h('b', { style: 'flex:1;align-self:center;color:var(--rest)' }, 'Riposo (R)'), h('button', { class: 'x', 'aria-label': 'Rimuovi', onclick: () => { entries.length = 0; draw(); } }, '✕')))]
-        : entries.map((e, n) => h('div', { class: 'entry' },
-          h('div', { class: 'top' },
-            h('select', { 'aria-label': 'Tipo', onchange: (ev) => { e.kind = ev.target.value; if (e.kind === 'loan' && !e.venue_id) e.venue_id = others[0]?.id; draw(); } },
-              h('option', { value: 'work', selected: e.kind === 'work' }, 'Turno'),
-              others.length ? h('option', { value: 'loan', selected: e.kind === 'loan' }, 'Prestito ad altro locale') : null),
-            h('button', { class: 'x', 'aria-label': 'Rimuovi', onclick: () => { entries.splice(n, 1); draw(); } }, '✕')),
-          e.kind === 'loan' ? h('select', { style: 'width:100%;margin-top:8px', 'aria-label': 'Locale', onchange: (ev) => { e.venue_id = Number(ev.target.value); } },
-            others.map((v) => h('option', { value: v.id, selected: v.id === e.venue_id }, venueLabel(v)))) : null,
-          e.kind === 'work' ? slotPicker(e, i, draw) : h('div', { class: 'times' },
-            h('input', { type: 'time', value: e.start, 'aria-label': 'Inizio', oninput: (ev) => { e.start = ev.target.value; } }),
-            h('span', {}, '–'),
-            h('input', { type: 'time', value: e.end, 'aria-label': 'Fine', oninput: (ev) => { e.end = ev.target.value; } })),
-          e.kind === 'loan' ? h('div', { class: 'sub', style: 'font-size:12px;margin:6px 0 0' }, 'Orari facoltativi per i prestiti') : null));
-      box.replaceChildren(...list,
-        h('div', { class: 'actions' },
-          entries.length < 3 ? h('button', { class: 'btn', onclick: () => { if (isRest) entries.length = 0; const slot = entries.some((x) => slotOf(x) === 'pranzo') ? 'cena' : 'pranzo'; entries.push({ kind: 'work', slot, start: '', end: SLOTS[slot].end(i) }); draw(); } }, '+ Fascia') : null,
-          h('button', { class: 'btn', style: 'color:var(--rest)', onclick: () => { entries.length = 0; entries.push({ kind: 'rest', start: '', end: '' }); draw(); } }, 'Riposo (R)')),
-        h('button', { class: 'btn primary block', onclick: async () => {
-          const payload = entries.map((e) => ({ kind: e.kind, start: e.start || null, end: e.end || null, venue_id: e.kind === 'loan' ? e.venue_id : undefined }));
-          if (payload.some((e) => e.kind === 'work' && (!e.start || !e.end))) return toast('Inserisci inizio e fine del turno', true);
-          if (payload.some((e) => e.kind === 'loan' && Boolean(e.start) !== Boolean(e.end))) return toast('Prestito: inserisci entrambi gli orari o nessuno', true);
-          if (await act(() => api.saveDay(emp.id, date, payload))) { close(); reloadWeek(); }
-        } }, 'Salva'));
+      const readouts = [];
+      const remove = (n) => h('button', { type: 'button', class: 'x', 'aria-label': `Rimuovi turno ${n + 1}`, onclick: () => { entries.splice(n, 1); draw(); } }, icon('x', 18));
+
+      const card = (e, n) => {
+        const readout = h('output', { class: 'readout' });
+        const paint = () => {
+          const t = timeOf(e);
+          readout.textContent = t || (e.kind === 'loan' ? 'Senza orario' : 'Scegli l\'inizio');
+          readout.classList.toggle('empty', !t);
+          if (!e.custom) return;
+          // anche l'etichetta e il colore seguono l'orario scritto a mano
+          card_.className = `turn tone-${toneOf(e)}`;
+          badge.textContent = nameOf(e);
+        };
+        readouts.push(paint);
+        const badge = h('span', { class: 'badge' }, nameOf(e));
+        const card_ = h('section', { class: `turn tone-${toneOf(e)}`, 'aria-label': `Turno ${n + 1}` },
+          h('div', { class: 'turn-head' },
+            h('div', { class: 'turn-id' }, badge, entries.length > 1 ? h('span', { class: 'turn-n' }, `Turno ${n + 1}`) : null),
+            readout, remove(n)),
+          h('div', { class: 'turn-body' },
+            others.length ? [caption('Tipo'), segmented('Tipo', [{ value: 'work', label: 'Turno' }, { value: 'loan', label: 'Prestito' }], e.kind, (k) => {
+              if (k === e.kind) return;
+              e.kind = k; e.slot = null; e.start = ''; e.end = ''; e.custom = false;
+              if (k === 'loan' && !e.venue_id) e.venue_id = others[0]?.id;
+              draw();
+            }, `tipo${entryKey(e)}`)] : null,
+            e.kind === 'loan' ? [caption('Locale che ospita'), dropdown({ variant: 'form', label: 'Locale', value: e.venue_id,
+              options: others.map((v) => ({ value: v.id, label: venueLabel(v) })), onchange: (id) => { e.venue_id = id; } })] : null,
+            slotPicker(e, i, draw, e.kind === 'loan')));
+        paint();
+        return card_;
+      };
+
+      const restCard = h('section', { class: 'turn tone-rest', 'aria-label': 'Riposo' },
+        h('div', { class: 'turn-head' }, h('div', { class: 'turn-id' }, h('span', { class: 'badge' }, 'R'), h('span', { class: 'turn-n' }, 'Giorno di riposo')), h('span', { class: 'readout' }), remove(0)));
+
+      const addTurn = () => {
+        if (isRest) entries.length = 0;
+        const slot = entries.some((x) => slotOf(x) === 'pranzo') ? 'cena' : 'pranzo';
+        entries.push({ kind: 'work', slot, start: '', end: SLOTS[slot].end(i) });
+        draw();
+        body.lastElementChild?.previousElementSibling?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      };
+      const tile = (ic, text, fn, cls = '') => h('button', { type: 'button', class: `tile ${cls}`.trim(), onclick: fn }, icon(ic, 20), text);
+
+      body.replaceChildren(
+        ...(isRest ? [restCard] : entries.map(card)),
+        ...(entries.length ? [] : [h('p', { class: 'day-empty' }, 'Nessun turno: aggiungine uno oppure segna il riposo.')]),
+        h('div', { class: 'tiles' },
+          entries.length < 3 ? tile('plus', entries.length === 1 && !isRest ? 'Doppio turno' : 'Aggiungi turno', addTurn) : null,
+          isRest ? null : tile('moon', 'Riposo', () => { entries.length = 0; entries.push({ kind: 'rest', start: '', end: '' }); draw(); }, 'rest')));
+      refreshReadout = () => readouts.forEach((p) => p());
     };
     draw();
-    return [h('h3', {}, emp.full_name), h('div', { class: 'sub' }, `${D.DAYS[i]} ${D.dayOfMonth(date)}/${date.slice(5, 7)}`), box];
-  });
+
+    const save = async () => {
+      const payload = [...entries].sort((a, b) => (a.start || '99').localeCompare(b.start || '99')).map((e) => ({ kind: e.kind, start: e.start || null, end: e.end || null, venue_id: e.kind === 'loan' ? e.venue_id : undefined }));
+      if (payload.some((e) => e.kind === 'work' && (!e.start || !e.end))) return toast('Scegli l\'inizio di ogni turno', true);
+      if (payload.some((e) => e.kind === 'loan' && Boolean(e.start) !== Boolean(e.end))) return toast('Prestito: scegli l\'inizio oppure "Senza orario"', true);
+      if (await act(() => api.saveDay(emp.id, date, payload))) { close(); reloadWeek(); }
+    };
+    return [
+      h('header', { class: 'day-head' },
+        h('div', {}, h('h3', {}, emp.full_name), h('div', { class: 'sub' }, `${D.DAYS[i]} ${D.dayOfMonth(date)}/${date.slice(5, 7)}`)),
+        h('button', { type: 'button', class: 'x ghost', 'aria-label': 'Chiudi', onclick: close }, icon('x', 20))),
+      body,
+      h('footer', { class: 'day-foot' }, h('button', { type: 'button', class: 'btn primary save', onclick: save }, 'Salva giornata')),
+    ];
+  }, 'day');
 }
 
 /* ---------- statistiche ore ---------- */
@@ -281,21 +546,21 @@ function statsContent() {
       tot += w;
       const note = !c ? h('span', { class: 'delta' }, 'ore contratto non impostate')
         : diff > 0 ? h('span', { class: 'delta over' }, `+${fmtH(diff)} oltre`)
-        : diff < 0 ? h('span', { class: 'delta under' }, `mancano ${fmtH(-diff)}`) : h('span', { class: 'delta ok' }, 'completo ✓');
+        : diff < 0 ? h('span', { class: 'delta under' }, `mancano ${fmtH(-diff)}`) : h('span', { class: 'delta ok' }, [icon('check', 14), ' completo']);
       return h('div', { class: 'row stat' }, h('span', { class: 'who' }, emp.full_name),
         h('span', { class: 'hrs' }, h('b', {}, fmtH(w)), c ? ` / ${fmtH(c)}` : '', h('br'), note));
     })));
   }).filter(Boolean);
   return [h('h3', { style: 'margin:0' }, 'Ore della settimana'), h('div', { class: 'sub' }, `${D.weekLabel(state.weekStart)} · totale ${fmtH(tot)}`), ...secs,
-    h('div', { class: 'sub', style: 'font-size:13px;margin-top:10px' }, 'Imposta le ore di contratto da Team › dipendente.')];
+    h('div', { class: 'sub', style: 'font-size:13px;margin-top:10px' }, 'Imposta le ore di contratto da Team, aprendo il dipendente.')];
 }
 
 // Pannello che si trascina verso l'alto dalla maniglia sopra la barra delle schede.
 function statsPanel() {
   const grab = h('div', { class: 'grabzone', 'aria-label': 'Statistiche ore: trascina verso l\'alto' }, h('div', { class: 'grab' }), h('span', {}, 'Ore'));
   const panel = h('div', { class: 'statpanel' + (state.statsOpen ? ' open' : '') }, grab, h('div', { class: 'statbody' }, statsContent()));
-  let y0 = null, moved = false, closedY = 0;
-  const offset = () => panel.offsetHeight - 30;
+  let y0 = null, moved = false, closedY = 0, raf = 0;
+  const offset = () => panel.offsetHeight - grab.offsetHeight;
   grab.addEventListener('pointerdown', (e) => {
     y0 = e.clientY; moved = false; closedY = offset();
     grab.setPointerCapture(e.pointerId);
@@ -306,11 +571,14 @@ function statsPanel() {
     const dy = e.clientY - y0;
     if (Math.abs(dy) > 4) moved = true;
     const base = state.statsOpen ? 0 : closedY;
-    panel.style.transform = `translateY(${Math.min(closedY, Math.max(0, base + dy))}px)`;
+    const y = Math.min(closedY, Math.max(0, base + dy));
+    if (raf) return;
+    raf = requestAnimationFrame(() => { raf = 0; panel.style.transform = `translate3d(0, ${y}px, 0)`; });
   });
   const end = (e) => {
     if (y0 == null) return;
     const dy = e.clientY - y0;
+    cancelAnimationFrame(raf); raf = 0;
     panel.classList.remove('dragging');
     panel.style.transform = '';
     if (!moved) state.statsOpen = !state.statsOpen;
@@ -351,19 +619,19 @@ function makePdf() {
 
 function viewTeam() {
   return h('div', {}, deptSections((emp) => h('div', { class: 'card' },
-    h('button', { class: 'row', onclick: () => editEmployee(emp) }, h('span', { class: 'who' }, emp.full_name), h('span', { style: 'color:var(--muted)' }, '✎')))),
+    h('button', { class: 'row', onclick: () => editEmployee(emp) }, h('span', { class: 'who' }, emp.full_name), h('span', { style: 'color:var(--muted)' }, icon('pencil', 18))))),
     h('div', { class: 'section' }, h('button', { class: 'btn primary block', onclick: () => editEmployee(null) }, '+ Aggiungi dipendente')));
 }
 
 function editEmployee(emp) {
   overlay((close) => {
     const name = h('input', { value: emp?.full_name || '', placeholder: 'Cognome Nome', autocapitalize: 'words' });
-    const dep = h('select', {}, state.deps.map((d) => h('option', { value: d.id, selected: d.id === (emp?.department_id ?? state.deps[0]?.id) }, d.name)));
-    const hours = h('input', { type: 'number', inputMode: 'decimal', min: 0, max: 80, step: 0.5, value: emp?.weekly_hours > 0 ? emp.weekly_hours : '', placeholder: 'es. 40' });
+    const dep = dropdown({ variant: 'form', label: 'Reparto', value: emp?.department_id ?? state.deps[0]?.id, options: state.deps.map((d) => ({ value: d.id, label: d.name })), onchange() {} });
+    const hours = h('input', { type: 'number', inputMode: 'decimal', min: 0, max: 666, step: 0.5, value: emp?.weekly_hours > 0 ? emp.weekly_hours : ''});
     return [
       h('h3', {}, emp ? 'Modifica dipendente' : 'Nuovo dipendente'),
       h('label', { class: 'field' }, 'Nome', name),
-      h('label', { class: 'field' }, 'Reparto', dep),
+      h('div', { class: 'field' }, 'Reparto', dep),
       h('label', { class: 'field' }, 'Ore settimanali da contratto', hours),
       h('button', { class: 'btn primary block', onclick: async () => {
         const n = name.value.trim();
@@ -403,7 +671,7 @@ function editLegend() {
         h('input', { value: r.short_desc, placeholder: 'Breve', maxLength: 40, oninput: (e) => { r.short_desc = e.target.value; } }),
         h('input', { value: r.description, placeholder: 'Descrizione', maxLength: 160, oninput: (e) => { r.description = e.target.value; } }),
         h('input', { value: r.hours, placeholder: 'Orario', maxLength: 60, oninput: (e) => { r.hours = e.target.value; } }),
-        h('button', { class: 'x', style: 'width:40px;min-height:44px', 'aria-label': 'Rimuovi', onclick: () => { rows.splice(n, 1); draw(); } }, '✕'))),
+        h('button', { class: 'x', 'aria-label': 'Rimuovi', onclick: () => { rows.splice(n, 1); draw(); } }, icon('x', 18)))),
       h('button', { class: 'btn block', onclick: () => { rows.push({ short_desc: '', description: '', hours: '' }); draw(); } }, '+ Riga'),
       h('button', { class: 'btn primary block', onclick: async () => {
         if (await act(() => api.saveLegend(state.venueId, rows))) { close(); reloadWeek(); }
@@ -416,7 +684,7 @@ function editLegend() {
 function newVenue() {
   overlay((close) => {
     const city = h('input', { value: 'Milano' });
-    const name = h('input', { placeholder: 'es. Pola' });
+    const name = h('input', { });
     return [
       h('h3', {}, 'Nuovo locale'),
       h('label', { class: 'field' }, 'Città', city),
