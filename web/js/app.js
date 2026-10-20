@@ -194,7 +194,8 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePicke
 function render() {
   const wk = state.weekStart;
   const topbar = h('div', { class: 'topbar' },
-    venuePicker(),
+    h('div', { class: 'toprow' }, venuePicker(),
+      state.tab === 'turni' ? h('button', { class: 'pdfbtn', 'aria-label': 'Crea PDF della settimana', onclick: makePdf }, icon('file', 22)) : null),
     state.tab === 'turni' ? h('div', { class: 'weeknav' },
       h('button', { 'aria-label': 'Settimana precedente', onclick: () => shiftWeek(-7) }, icon('left')),
       h('div', { class: 'label' }, `Settimana ${D.isoWeek(wk)}`, h('small', {}, D.weekLabel(wk))),
@@ -212,7 +213,7 @@ function render() {
   };
   const tab = (id, icon_, label) => h('button', { 'aria-current': state.tab === id ? 'page' : null, onclick: () => goTab(id) }, icon(icon_), h('span', { class: 'lbl' }, label));
   const nodes = [topbar, body];
-  if (state.tab === 'turni') nodes.push(statsPanel(), h('button', { class: 'fab', onclick: makePdf }, icon('file', 20), 'PDF'));
+  if (state.tab === 'turni') nodes.push(statsPanel());
   nodes.push(h('nav', { class: 'tabbar' }, tab('turni', 'calendar', 'Turni'), tab('team', 'users', 'Team'), tab('altro', 'settings', 'Altro')));
   const scroll = window.scrollY;
   root.replaceChildren(h('div', { class: 'app' }, nodes));
@@ -455,10 +456,19 @@ function editDay(emp, date) {
 
   overlay((close) => {
     const body = h('div', { class: 'day-body' });
+    let restFresh = false;
     const draw = () => {
       const isRest = entries.length === 1 && entries[0].kind === 'rest';
       const readouts = [];
-      const remove = (n) => h('button', { type: 'button', class: 'x', 'aria-label': `Rimuovi turno ${n + 1}`, onclick: () => { entries.splice(n, 1); draw(); } }, icon('x', 18));
+      // la card si rimpicciolisce e si richiude su se stessa, poi viene tolta davvero
+      const remove = (n) => h('button', { type: 'button', class: 'x', 'aria-label': `Rimuovi turno ${n + 1}`, onclick: (ev) => {
+        const el = ev.currentTarget.closest('.turn');
+        if (!el || el.classList.contains('leaving')) return;
+        el.style.maxHeight = `${el.offsetHeight}px`;
+        void el.offsetHeight;
+        el.classList.add('leaving');
+        setTimeout(() => { entries.splice(n, 1); draw(); }, 280);
+      } }, icon('x', 18));
 
       const card = (e, n) => {
         const readout = h('output', { class: 'readout' });
@@ -468,16 +478,22 @@ function editDay(emp, date) {
           readout.classList.toggle('empty', !t);
           if (!e.custom) return;
           // anche l'etichetta e il colore seguono l'orario scritto a mano
-          card_.className = `turn tone-${toneOf(e)}`;
+          card_.className = `turn tone-${toneOf(e)}${e.open ? '' : ' collapsed'}`;
           badge.textContent = nameOf(e);
         };
         readouts.push(paint);
         const badge = h('span', { class: 'badge' }, nameOf(e));
-        const card_ = h('section', { class: `turn tone-${toneOf(e)}`, 'aria-label': `Turno ${n + 1}` },
-          h('div', { class: 'turn-head' },
-            h('div', { class: 'turn-id' }, badge, entries.length > 1 ? h('span', { class: 'turn-n' }, `Turno ${n + 1}`) : null),
-            readout, remove(n)),
-          h('div', { class: 'turn-body' },
+        // con più turni le card si chiudono toccando l'intestazione; di default resta aperto solo quello ancora da compilare
+        if (e.open === undefined) e.open = entries.length === 1 || !e.start;
+        const isOpen = () => e.open;
+        const toggle = () => { e.open = !isOpen(); card_.classList.toggle('collapsed', !isOpen()); head.setAttribute('aria-expanded', String(isOpen())); };
+        const head = h('div', { class: 'turn-head', role: 'button', tabindex: '0', 'aria-expanded': String(isOpen()), onclick: (ev) => { if (!ev.target.closest('.x')) toggle(); },
+          onkeydown: (ev) => { if ((ev.key === 'Enter' || ev.key === ' ') && ev.target === head) { ev.preventDefault(); toggle(); } } },
+          h('div', { class: 'turn-id' }, badge, entries.length > 1 ? h('span', { class: 'turn-n' }, `Turno ${n + 1}`) : null),
+          readout, remove(n));
+        const card_ = h('section', { class: `turn tone-${toneOf(e)}${isOpen() ? '' : ' collapsed'}${e.fresh ? ' entering' : ''}`, 'aria-label': `Turno ${n + 1}` },
+          head,
+          h('div', { class: 'turn-fold' }, h('div', { class: 'turn-clip' }, h('div', { class: 'turn-body' },
             others.length ? [caption('Tipo'), segmented('Tipo', [{ value: 'work', label: 'Turno' }, { value: 'loan', label: 'Prestito' }], e.kind, (k) => {
               if (k === e.kind) return;
               e.kind = k; e.slot = null; e.start = ''; e.end = ''; e.custom = false;
@@ -486,29 +502,32 @@ function editDay(emp, date) {
             }, `tipo${entryKey(e)}`)] : null,
             e.kind === 'loan' ? [caption('Locale che ospita'), dropdown({ variant: 'form', label: 'Locale', value: e.venue_id,
               options: others.map((v) => ({ value: v.id, label: venueLabel(v) })), onchange: (id) => { e.venue_id = id; } })] : null,
-            slotPicker(e, i, draw, e.kind === 'loan')));
+            slotPicker(e, i, draw, e.kind === 'loan')))));
         paint();
+        delete e.fresh;
         return card_;
       };
 
-      const restCard = h('section', { class: 'turn tone-rest', 'aria-label': 'Riposo' },
+      const restCard = h('section', { class: `turn tone-rest${restFresh ? ' entering' : ''}`, 'aria-label': 'Riposo' },
         h('div', { class: 'turn-head' }, h('div', { class: 'turn-id' }, h('span', { class: 'badge' }, 'R'), h('span', { class: 'turn-n' }, 'Giorno di riposo')), h('span', { class: 'readout' }), remove(0)));
 
       const addTurn = () => {
         if (isRest) entries.length = 0;
         const slot = entries.some((x) => slotOf(x) === 'pranzo') ? 'cena' : 'pranzo';
-        entries.push({ kind: 'work', slot, start: '', end: SLOTS[slot].end(i) });
+        entries.forEach((x) => { if (x.start) x.open = false; });
+        entries.push({ kind: 'work', slot, start: '', end: SLOTS[slot].end(i), open: true, fresh: true });
         draw();
         body.lastElementChild?.previousElementSibling?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       };
       const tile = (ic, text, fn, cls = '') => h('button', { type: 'button', class: `tile ${cls}`.trim(), onclick: fn }, icon(ic, 20), text);
 
+      restFresh = false;
       body.replaceChildren(
         ...(isRest ? [restCard] : entries.map(card)),
         ...(entries.length ? [] : [h('p', { class: 'day-empty' }, 'Nessun turno: aggiungine uno oppure segna il riposo.')]),
         h('div', { class: 'tiles' },
           entries.length < 3 ? tile('plus', entries.length === 1 && !isRest ? 'Doppio turno' : 'Aggiungi turno', addTurn) : null,
-          isRest ? null : tile('moon', 'Riposo', () => { entries.length = 0; entries.push({ kind: 'rest', start: '', end: '' }); draw(); }, 'rest')));
+          isRest ? null : tile('moon', 'Riposo', () => { entries.length = 0; entries.push({ kind: 'rest', start: '', end: '' }); restFresh = true; draw(); }, 'rest')));
       refreshReadout = () => readouts.forEach((p) => p());
     };
     draw();
@@ -537,13 +556,11 @@ const weekHours = (empId) => dates().reduce((tot, d) => tot + entriesOf(empId, d
 const fmtH = (n) => `${Number.isInteger(n) ? n : n.toFixed(1).replace('.', ',')}h`;
 
 function statsContent() {
-  let tot = 0;
   const secs = state.deps.map((dep) => {
     const emps = state.week.employees.filter((e) => e.department_id === dep.id);
     if (!emps.length) return null;
     return h('section', { class: 'section', style: 'padding:10px 0 0' }, h('h2', {}, dep.name), h('div', { class: 'card' }, emps.map((emp) => {
       const w = weekHours(emp.id), c = Number(emp.weekly_hours) || 0, diff = w - c;
-      tot += w;
       const note = !c ? h('span', { class: 'delta' }, 'ore contratto non impostate')
         : diff > 0 ? h('span', { class: 'delta over' }, `+${fmtH(diff)} oltre`)
         : diff < 0 ? h('span', { class: 'delta under' }, `mancano ${fmtH(-diff)}`) : h('span', { class: 'delta ok' }, [icon('check', 14), ' completo']);
@@ -551,7 +568,7 @@ function statsContent() {
         h('span', { class: 'hrs' }, h('b', {}, fmtH(w)), c ? ` / ${fmtH(c)}` : '', h('br'), note));
     })));
   }).filter(Boolean);
-  return [h('h3', { style: 'margin:0' }, 'Ore della settimana'), h('div', { class: 'sub' }, `${D.weekLabel(state.weekStart)} · totale ${fmtH(tot)}`), ...secs,
+  return [h('h3', { style: 'margin:0' }, 'Ore della settimana'), ...secs,
     h('div', { class: 'sub', style: 'font-size:13px;margin-top:10px' }, 'Imposta le ore di contratto da Team, aprendo il dipendente.')];
 }
 
@@ -589,6 +606,35 @@ function statsPanel() {
   };
   grab.addEventListener('pointerup', end);
   grab.addEventListener('pointercancel', end);
+
+  // Il pannello aperto si chiude trascinando verso il basso da qualsiasi punto del contenuto.
+  // Con i tocchi (non passivi) si blocca lo scorrimento nativo, così il browser non ricarica la pagina.
+  const bodyEl = panel.querySelector('.statbody');
+  let ty0 = null, tdrag = false;
+  bodyEl.addEventListener('touchstart', (e) => { ty0 = e.touches[0].clientY; tdrag = false; }, { passive: true });
+  bodyEl.addEventListener('touchmove', (e) => {
+    if (ty0 == null || !state.statsOpen) return;
+    const dy = e.touches[0].clientY - ty0;
+    if (!tdrag) {
+      // si decide al primo movimento: se lo scorrimento nativo è già partito non si può più annullare
+      if (dy > 0 && bodyEl.scrollTop <= 0 && e.cancelable) { tdrag = true; panel.classList.add('dragging'); } else return;
+    }
+    e.preventDefault();
+    const y = Math.min(offset(), Math.max(0, dy));
+    if (raf) return;
+    raf = requestAnimationFrame(() => { raf = 0; panel.style.transform = `translate3d(0, ${y}px, 0)`; });
+  }, { passive: false });
+  const tend = (e) => {
+    if (!tdrag) { ty0 = null; return; }
+    const dy = (e.changedTouches[0]?.clientY ?? ty0) - ty0;
+    cancelAnimationFrame(raf); raf = 0;
+    panel.classList.remove('dragging');
+    panel.style.transform = '';
+    if (dy > 60) { state.statsOpen = false; panel.classList.remove('open'); }
+    ty0 = null; tdrag = false;
+  };
+  bodyEl.addEventListener('touchend', tend);
+  bodyEl.addEventListener('touchcancel', tend);
   return panel;
 }
 
