@@ -74,10 +74,23 @@ export function createApp() {
          FROM shifts s JOIN employees e ON e.id = s.employee_id
         WHERE e.venue_id = ? AND e.active = 1 AND s.work_date BETWEEN ? AND ?
         ORDER BY s.work_date, s.employee_id, s.position`, [id, fmtDate(start), fmtDate(end)]);
+    // ospiti: persone di altri locali in prestito qui; i loro turni arrivano tutti (non solo quelli di questo locale) per avere il totale delle ore
+    const [guests] = await pool.query(
+      `SELECT DISTINCT e.id, e.department_id, e.full_name, e.weekly_hours, e.venue_id AS home_venue_id
+         FROM employees e JOIN shifts s ON s.employee_id = e.id
+        WHERE s.kind = 'loan' AND s.location_venue_id = ? AND e.venue_id <> ? AND e.active = 1 AND s.work_date BETWEEN ? AND ?
+        ORDER BY e.full_name`, [id, id, fmtDate(start), fmtDate(end)]);
+    if (guests.length) {
+      const [guestShifts] = await pool.query(
+        `SELECT s.employee_id, s.work_date AS date, s.kind, s.start_time AS start, s.end_time AS end, s.location_venue_id AS venue_id
+           FROM shifts s WHERE s.employee_id IN (?) AND s.work_date BETWEEN ? AND ?
+          ORDER BY s.work_date, s.employee_id, s.position`, [guests.map((g) => g.id), fmtDate(start), fmtDate(end)]);
+      shifts.push(...guestShifts);
+    }
     const [legend] = await pool.query(
       'SELECT short_desc, description, hours FROM legend WHERE venue_id = ? ORDER BY id', [id]);
     const [venues] = await pool.query('SELECT id, city, name FROM venues ORDER BY city, name');
-    res.json({ venue, venues, employees, shifts, legend });
+    res.json({ venue, venues, employees, guests, shifts, legend });
   }));
 
   function parseHours(v, fallback) {
