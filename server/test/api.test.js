@@ -81,6 +81,22 @@ test('turni: doppia fascia, riposo, prestito, validazioni', async () => {
   assert.equal(w2.shifts.filter((s) => s.date === '2026-10-19').length, 1);
 });
 
+test('prestito: chi arriva compare come ospite nel locale che lo ospita', async () => {
+  const put = (date, entries) => api('PUT', `/api/employees/${emp.id}/day`, { date, entries });
+  await put('2026-10-19', [{ kind: 'work', start: '11:00', end: '15:00' }]);
+  await put('2026-10-22', [{ kind: 'loan', venue_id: pola.id, start: '11:30', end: '14:30' }]);
+
+  const p = (await api('GET', `/api/venues/${pola.id}/week?start=2026-10-19`)).body;
+  assert.equal(p.employees.length, 0);
+  assert.deepEqual(p.guests.map((g) => [g.id, g.home_venue_id]), [[emp.id, tunisia.id]]);
+  assert.equal(p.shifts.length, 3, 'anche i turni di casa (lavoro e riposo), per il totale delle ore');
+  assert.equal(p.shifts.filter((s) => s.kind === 'loan' && s.venue_id === pola.id).length, 1);
+
+  const t = (await api('GET', `/api/venues/${tunisia.id}/week?start=2026-10-19`)).body;
+  assert.equal(t.guests.length, 0);
+  assert.equal((await api('GET', `/api/venues/${pola.id}/week?start=2026-10-26`)).body.guests.length, 0, 'altra settimana');
+});
+
 test('salvataggi concorrenti dello stesso dipendente non vanno in deadlock', async () => {
   const dates = ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08'];
   const rs = await Promise.all(dates.map((date) => api('PUT', `/api/employees/${emp.id}/day`, { date, entries: [{ kind: 'work', start: '19:00', end: '23:30' }] })));

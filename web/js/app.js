@@ -142,14 +142,22 @@ const entriesOf = (empId, date) => state.index.get(`${empId}|${date}`) || [];
 const venueName = (id) => state.week.venues.find((v) => v.id === id)?.name || '?';
 const dates = () => D.weekDates(state.weekStart);
 
-function chips(entries) {
+// here: la scheda sta nel locale che ospita, quindi i prestiti mostrano solo l'orario (e il colore pranzo/cena)
+function chips(entries, here = false) {
   if (!entries.length) return h('div', { class: 'chips' }, h('span', { class: 'chip empty' }, '—'));
   return h('div', { class: 'chips' }, entries.map((e) => {
     if (e.kind === 'rest') return h('span', { class: 'chip rest' }, 'R');
     if (e.kind === 'work') return h('span', { class: `chip ${slotOf(e) === 'cena' ? 'dinner' : 'lunch'}` }, `${e.start} – ${e.end}`);
+    if (here) return h('span', { class: `chip ${slotOf(e) === 'cena' ? 'dinner' : slotOf(e) ? 'lunch' : 'loan'}` }, e.start ? `${e.start} – ${e.end}` : 'Senza orario');
     return h('span', { class: 'chip loan' }, [icon('arrow', 13), ` ${venueName(e.venue_id)}${e.start ? ` ${e.start}–${e.end}` : ''}`]);
   }));
 }
+
+// Persone di altri locali che lavorano qui in prestito (si modificano dal loro locale di casa).
+const guestsOf = () => state.week.guests || [];
+const hereLoans = (g, d) => entriesOf(g.id, d).filter((e) => e.kind === 'loan' && e.venue_id === state.venueId);
+const guestName = (g) => [g.full_name, h('small', { class: 'from' }, ` da ${venueName(g.home_venue_id)}`)];
+
 
 /* ---------- schermata principale ---------- */
 
@@ -305,6 +313,18 @@ function deptSections(renderEmployee) {
   return secs.length ? secs : [h('div', { class: 'empty-state' }, 'Nessun dipendente in questo locale.', h('br'), 'Aggiungili dalla scheda ', h('b', {}, 'Team'), '.')];
 }
 
+// date: un solo giorno (vista giorno); senza date, tutta la settimana
+function guestSection(date) {
+  const ds = dates();
+  const list = date ? guestsOf().filter((g) => hereLoans(g, date).length) : guestsOf();
+  if (!list.length) return null;
+  return h('section', { class: 'section' }, h('h2', {}, 'In prestito da altri locali'), list.map((g) => h('div', { class: 'card' }, date
+    ? h('div', { class: 'row' }, h('span', { class: 'who' }, guestName(g)), chips(hereLoans(g, date), true))
+    : [h('div', { class: 'name' }, guestName(g)), h('div', { class: 'daytable' }, ds.map((d, i) => (hereLoans(g, d).length
+      ? h('div', { class: 'row' + (i === 6 ? ' sunday' : '') }, h('span', { class: 'dl' }, `${D.DAYS[i]} ${D.dayOfMonth(d)}`), h('span', { style: 'flex:1' }), chips(hereLoans(g, d), true))
+      : null)))])));
+}
+
 function viewTurni() {
   const ds = dates();
   const seg = segmented('Vista', [{ value: 'day', label: 'Giorno' }, { value: 'week', label: 'Settimana' }], state.mode,
@@ -313,15 +333,18 @@ function viewTurni() {
     return h('div', {}, seg, h('div', { class: 'page' }, deptSections((emp) => h('div', { class: 'card' },
       h('div', { class: 'name' }, emp.full_name),
       h('div', { class: 'daytable' }, ds.map((d, i) => h('button', { class: 'row' + (i === 6 ? ' sunday' : ''), onclick: () => editDay(emp, d) },
-        h('span', { class: 'dl' }, `${D.DAYS[i]} ${D.dayOfMonth(d)}`), h('span', { style: 'flex:1' }), chips(entriesOf(emp.id, d)))))))));
+        h('span', { class: 'dl' }, `${D.DAYS[i]} ${D.dayOfMonth(d)}`), h('span', { style: 'flex:1' }), chips(entriesOf(emp.id, d))))))), guestSection()));
   }
-  // persone in turno a pranzo e a cena (chi fa il doppio turno conta in entrambi; i prestiti non contano)
+  // persone in turno a pranzo e a cena (chi fa il doppio turno conta in entrambi);
+  // i prestiti verso altri locali non contano qui, quelli in arrivo da altri locali sì
   const crew = (d) => {
     const n = { pranzo: 0, cena: 0 };
-    for (const emp of state.week.employees) {
-      const slots = new Set(entriesOf(emp.id, d).filter((x) => x.kind === 'work').map(slotOf));
+    const count = (entries) => {
+      const slots = new Set(entries.map(slotOf));
       for (const k of Object.keys(n)) if (slots.has(k)) n[k]++;
-    }
+    };
+    for (const emp of state.week.employees) count(entriesOf(emp.id, d).filter((x) => x.kind === 'work'));
+    for (const g of guestsOf()) count(hereLoans(g, d));
     return n;
   };
   const strip = h('div', { class: 'days' }, ds.map((d, i) => {
@@ -339,7 +362,7 @@ function viewTurni() {
     h('span', { class: 'tally-l' }, h('b', {}, label), today[key] === 1 ? 'persona' : 'persone'));
   const summary = h('div', { class: 'crew', role: 'group', 'aria-label': 'Persone in turno' }, tally('pranzo', 'Pranzo'), tally('cena', 'Cena'));
   return h('div', {}, seg, strip, summary, h('div', { class: 'page' }, deptSections((emp) => h('div', { class: 'card' },
-    h('button', { class: 'row', onclick: () => editDay(emp, date) }, h('span', { class: 'who' }, emp.full_name), chips(entriesOf(emp.id, date)))))));
+    h('button', { class: 'row', onclick: () => editDay(emp, date) }, h('span', { class: 'who' }, emp.full_name), chips(entriesOf(emp.id, date))))), guestSection(date)));
 }
 
 /* ---------- editor turni di un giorno ---------- */
@@ -552,22 +575,27 @@ function editDay(emp, date) {
 
 const toMin = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
 const shiftHours = (e) => { let d = toMin(e.end) - toMin(e.start); if (d <= 0) d += 1440; return d / 60; };
-const weekHours = (empId) => dates().reduce((tot, d) => tot + entriesOf(empId, d).filter((e) => e.kind === 'work' && e.start && e.end).reduce((a, e) => a + shiftHours(e), 0), 0);
+// turni nel proprio locale + prestiti con orario (in qualunque locale); riposi e prestiti senza orario non contano
+const weekHours = (empId) => dates().reduce((tot, d) => tot + entriesOf(empId, d).filter((e) => e.kind !== 'rest' && e.start && e.end).reduce((a, e) => a + shiftHours(e), 0), 0);
 const fmtH = (n) => `${Number.isInteger(n) ? n : n.toFixed(1).replace('.', ',')}h`;
+
+function statRow(emp, name) {
+  const w = weekHours(emp.id), c = Number(emp.weekly_hours) || 0, diff = w - c;
+  const note = !c ? h('span', { class: 'delta' }, 'ore contratto non impostate')
+    : diff > 0 ? h('span', { class: 'delta over' }, `+${fmtH(diff)} oltre`)
+    : diff < 0 ? h('span', { class: 'delta under' }, `mancano ${fmtH(-diff)}`) : h('span', { class: 'delta ok' }, [icon('check', 14), ' completo']);
+  return h('div', { class: 'row stat' }, h('span', { class: 'who' }, name),
+    h('span', { class: 'hrs' }, h('b', {}, fmtH(w)), c ? ` / ${fmtH(c)}` : '', h('br'), note));
+}
 
 function statsContent() {
   const secs = state.deps.map((dep) => {
     const emps = state.week.employees.filter((e) => e.department_id === dep.id);
     if (!emps.length) return null;
-    return h('section', { class: 'section', style: 'padding:10px 0 0' }, h('h2', {}, dep.name), h('div', { class: 'card' }, emps.map((emp) => {
-      const w = weekHours(emp.id), c = Number(emp.weekly_hours) || 0, diff = w - c;
-      const note = !c ? h('span', { class: 'delta' }, 'ore contratto non impostate')
-        : diff > 0 ? h('span', { class: 'delta over' }, `+${fmtH(diff)} oltre`)
-        : diff < 0 ? h('span', { class: 'delta under' }, `mancano ${fmtH(-diff)}`) : h('span', { class: 'delta ok' }, [icon('check', 14), ' completo']);
-      return h('div', { class: 'row stat' }, h('span', { class: 'who' }, emp.full_name),
-        h('span', { class: 'hrs' }, h('b', {}, fmtH(w)), c ? ` / ${fmtH(c)}` : '', h('br'), note));
-    })));
+    return h('section', { class: 'section', style: 'padding:10px 0 0' }, h('h2', {}, dep.name), h('div', { class: 'card' }, emps.map((emp) => statRow(emp, emp.full_name))));
   }).filter(Boolean);
+  if (guestsOf().length) secs.push(h('section', { class: 'section', style: 'padding:10px 0 0' }, h('h2', {}, 'In prestito da altri locali'),
+    h('div', { class: 'card' }, guestsOf().map((g) => statRow(g, guestName(g))))));
   return [h('h3', { style: 'margin:0' }, 'Ore della settimana'), ...secs,
     h('div', { class: 'sub', style: 'font-size:13px;margin-top:10px' }, 'Imposta le ore di contratto da Team, aprendo il dipendente.')];
 }
